@@ -462,12 +462,41 @@ didReceiveResponse:(NSURLResponse *)response
     }
 }
 
+#pragma mark TODO
+
+/* Need to Move opening cert file to singleton class.  Allow file certificate to be specified in singleton, instead of hard coded */
+
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential *credential))completionHandler {
     
     NSURLSessionAuthChallengeDisposition disposition = NSURLSessionAuthChallengePerformDefaultHandling;
     __block NSURLCredential *credential = nil;
+    if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodClientCertificate]) {
+        NSBundle * myBundle = [NSBundle mainBundle];
+        NSString * thePath = [myBundle pathForResource:@"client" ofType:@"x-p12"];
+        NSData * pkcsdata = [NSData dataWithContentsOfFile: thePath];
+        NSDictionary * options = [[NSDictionary alloc] initWithObjectsAndKeys:@"", (id) kSecImportExportPassphrase, nil];
+        CFArrayRef items = NULL;
+        OSStatus status = SecPKCS12Import((__bridge CFDataRef) pkcsdata, (CFDictionaryRef) options, &items);
+        
+        SecIdentityRef    ident;
+        SecCertificateRef certificate;
+        
+        if (status == noErr) {
+            CFDictionaryRef securityItems = CFArrayGetValueAtIndex(items, 0);
+            ident = ( SecIdentityRef)CFDictionaryGetValue(securityItems, kSecImportItemIdentity);
+            SecIdentityCopyCertificate(ident, (SecCertificateRef *) &certificate);
+            NSLog(@"trusting connection to host %@", challenge.protectionSpace.host);
+            const void *certs[] = { certificate };
+            
+            CFArrayRef certsArray = CFArrayCreate(NULL, certs, 1, NULL);
+            credential = [NSURLCredential credentialWithIdentity:ident certificates:(__bridge NSArray*)certsArray persistence:NSURLCredentialPersistencePermanent];
+            [challenge.sender useCredential: credential forAuthenticationChallenge:challenge];
+            CFRelease(certsArray);
+            disposition = NSURLSessionAuthChallengeUseCredential;
+        }
     
-    if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
+    }
+    else if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
         if (!(self.options & SDWebImageDownloaderAllowInvalidSSLCertificates)) {
             disposition = NSURLSessionAuthChallengePerformDefaultHandling;
         } else {
